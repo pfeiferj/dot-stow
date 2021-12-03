@@ -1,10 +1,12 @@
 extern crate yaml_rust;
+extern crate dirs;
 
 use glob::glob;
 use std::path::PathBuf;
 use std::os::unix::fs;
 use std::fs::canonicalize;
 use yaml_rust::YamlLoader;
+use dirs::home_dir;
 
 fn main() {
     use clap::{load_yaml, App};
@@ -44,13 +46,33 @@ fn handle_yaml()
 
 fn handle_source_and_target(source: &str, target: &str)
 {
-    println!("{}", ["linking ", source, " -> ", target, ":"].join(""));
-    let source_glob = [source, "/**/*"].join("");
+    let expanded_source = match source.chars().nth(0).expect("Source must not be blank") {
+        '~' => {
+            let stripped_source = source.strip_prefix("~").expect("String manipulation didn't succeed").to_owned();
+            let home_path = home_dir().expect("Couldn't find home directory").to_owned();
+            let home_path_str = home_path.into_os_string().into_string().unwrap().as_str().to_owned();
+            let expanded_source = [home_path_str, stripped_source].join("");
+            expanded_source
+        },
+        _ => String::from(source)
+    };
+    let expanded_target = match target.chars().nth(0).expect("Source must not be blank") {
+        '~' => {
+            let stripped_target = target.strip_prefix("~").expect("String manipulation didn't succeed").to_owned();
+            let home_path = home_dir().expect("Couldn't find home directory").to_owned();
+            let home_path_str = home_path.into_os_string().into_string().unwrap().as_str().to_owned();
+            let expanded_target = [home_path_str, stripped_target].join("");
+            expanded_target
+        },
+        _ => String::from(source)
+    };
+    println!("{}", ["linking ", expanded_source.as_str(), " -> ", expanded_target.as_str(), ":"].join(""));
+    let source_glob = [expanded_source.as_str(), "/**/*"].join("");
 
     for entry in glob(&source_glob).expect("Failed to read glob pattern") {
         match entry {
             Ok(path) => {
-                match link_file(source, &path, target) {
+                match link_file(expanded_source.as_str(), &path, expanded_target.as_str()) {
                     Ok(_) => (),
                     Err(e) => eprintln!("    \x1b[93m{}\x1b[0m", e)
                 }
