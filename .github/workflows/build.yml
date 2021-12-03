@@ -4,7 +4,7 @@ name: CI
 
 jobs:
   build_and_test_ubuntu:
-    name: Rust project
+    name: Build ubuntu
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -15,8 +15,13 @@ jobs:
         with:
           command: build
           args: --release --all-features
+      - name: Archive linux artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-target
+          path: target
   build_and_test_mac:
-    name: Rust project
+    name: Build mac
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v2
@@ -27,3 +32,8 @@ jobs:
         with:
           command: build
           args: --release --all-features
+      - name: Archive mac artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: mac-target
+          path: target
