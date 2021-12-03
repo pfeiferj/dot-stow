@@ -1,0 +1,19 @@
+name: dot-stow
+version: "0.1"
+about: A dot file manager that uses symlinks.
+author: Jacob Pfeifer
+
+# All Args must be defined in the 'args:' list where the name of the arg, is the
+# key to a Hash object
+args:
+    - source:
+        long: source
+        short: s
+        about: The source root folder to create symlinks to.
+        # possible_values can also be defined in this list format
+        takes_value: true
+    - target:
+        long: target
+        short: t
+        about: The target root folder to create symlinks in.
+        takes_value: true
