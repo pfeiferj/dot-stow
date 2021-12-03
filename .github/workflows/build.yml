@@ -19,7 +19,7 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: linux-target
-          path: target
+          path: target/release/dot-stow
   build_and_test_mac:
     name: Build mac
     runs-on: macos-latest
@@ -36,4 +36,4 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           name: mac-target
-          path: target
+          path: target/release/dot-stow
