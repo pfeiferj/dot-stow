@@ -1,0 +1,3 @@
+:; sh .stow_scripts/install.sh; exit $?
+@ECHO OFF
+ECHO Adding windows support soonish

@@ -1,0 +1,11 @@
+pre_stow: ".stow_scripts/some_script.sh" # Optional, a script to run before linking files
+post_stow: ".stow_scripts/some_script.sh" # Optional, a script to run after linking files
+mappings:
+  - source: some_directory_with_files
+    target: some_directory_to_place_links
+    pre_stow: ".stow_scripts/some_script.sh" # Optional, ran before linking this mapping
+    post_stow: ".stow_scripts/some_script.sh" # Optional, ran after linking this mapping
+  - source: another_directory_with_files
+    target: another_directory_to_place_links
+    pre_stow: ".stow_scripts/another_script.sh" # Optional, ran before linking this mapping
+    post_stow: ".stow_scripts/another_script.sh" # Optional, ran after linking this mapping

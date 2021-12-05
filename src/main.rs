@@ -1,38 +1,115 @@
-extern crate yaml_rust;
-extern crate shellexpand;
-
-use glob::glob;
+use shellexpand;
 use std::path::PathBuf;
-use std::os::unix::fs;
-use std::fs::canonicalize;
+use std::os::unix::fs as unix_fs;
+use std::fs;
 use yaml_rust::YamlLoader;
-use shellexpand::tilde;
+use yaml_rust::Yaml;
+use std::process::Command;
+use clap::{load_yaml, App};
+use std::io::prelude::*;
 
-fn main() {
-    use clap::{load_yaml, App};
-
-    let yaml = load_yaml!("clap.yml");
-    let m = App::from(yaml).get_matches();
-    match m.value_of("source") {
-        Some(source) => {
-            match m.value_of("target") {
-                Some(target) => handle_source_and_target(source, target),
-                _ => (),
-            };
-            ()
-        },
-        _ => {
-            handle_yaml();
-        },
-    };
+enum CommandType {
+    Pre,
+    Post,
 }
 
-fn handle_yaml()
+struct CommandOptionsPresent {
+    source: bool,
+    target: bool,
+    init: bool
+}
+
+enum ExecutionType {
+    CurrentFolder,
+    SourceAndTarget,
+    Init,
+    Undefined,
+}
+
+fn main() {
+    let yaml = load_yaml!("clap.yml");
+    let mut app = App::from(yaml);
+    let m = App::from(yaml).get_matches();
+    let cmd_options_present = CommandOptionsPresent {
+        source: m.is_present("source"),
+        target: m.is_present("target"),
+        init: m.is_present("init")
+    };
+    match get_command_type(cmd_options_present) {
+        ExecutionType::CurrentFolder => handle_yaml(&mut app),
+        ExecutionType::SourceAndTarget => {
+            let sat = get_source_and_target(m);
+            handle_source_and_target(sat.0.as_str(), sat.1.as_str());
+        },
+        ExecutionType::Init => {
+            match init() {
+                Ok(_) => (),
+                Err(_) => println!("Could not create files."),
+            }
+        },
+        ExecutionType::Undefined => {
+            println!("Unsupported arguments");
+        },
+    }
+}
+
+fn init() -> std::io::Result<()> {
+    let install_file_str = include_str!("./init_files/install");
+    let stow_file_str = include_str!("./init_files/.stow.yml");
+    let install_sh_file_str = include_str!("./init_files/.stow_scripts/install.sh");
+
+
+    if !std::path::Path::new(".stow_scripts").exists() {
+        fs::create_dir(".stow_scripts")?;
+    }
+
+    let mut buffer = std::fs::OpenOptions::new().create(true).write(true).open("install")?;
+    buffer.write_all(install_file_str.as_bytes())?;
+
+    let mut buffer = std::fs::OpenOptions::new().create(true).write(true).open(".stow_scripts/install.sh")?;
+    buffer.write_all(install_sh_file_str.as_bytes())?;
+
+    if !std::path::Path::new(".stow.yml").exists() {
+        fs::write(".stow.yml", stow_file_str)?;
+    }
+    Ok(())
+}
+
+fn get_source_and_target(matches: clap::ArgMatches) -> (String, String) {
+    let source = matches.value_of("source")
+        .expect("Argument matches must contain source.");
+    let target = matches.value_of("target")
+        .expect("Argument matches must contain target.");
+    return ( String::from(source), String::from(target));
+}
+
+fn get_command_type(command_options: CommandOptionsPresent) -> ExecutionType {
+    match command_options {
+        CommandOptionsPresent { source: false, target: false, init: true } => ExecutionType::Init,
+        CommandOptionsPresent { source: true, target: true, init: false } => ExecutionType::SourceAndTarget,
+        CommandOptionsPresent { source: false, target: false, init: false } => ExecutionType::CurrentFolder,
+        _ => ExecutionType::Undefined
+    }
+}
+
+fn handle_yaml(app: &mut App)
 {
-    let stow_yaml_str = std::fs::read_to_string(".stow.yml")
-        .expect("No .stow.yml file, please specify a source and target or for help use --help.");
+    app.print_help()
+        .expect("Failed to print help");
+    let stow_yaml_str = match fs::read_to_string(".stow.yml") {
+        Ok(str) => str,
+        Err(_) => {
+            app.print_help()
+                .expect("Failed to print help");
+            println!("\x1b[93m{}\x1b[0m", "\nNo .stow.yml found");
+            std::process::exit(0);
+        }
+    };
 
     let stow_yaml = &YamlLoader::load_from_str(&stow_yaml_str).unwrap()[0];
+
+    handle_script(CommandType::Pre, stow_yaml);   
+
     let mappings = stow_yaml["mappings"].as_vec()
         .expect("could not parse sources");
     for mapping in mappings {
@@ -40,18 +117,44 @@ fn handle_yaml()
             .expect("could not parse source of mapping");
         let target = mapping["target"].as_str()
             .expect("could not target source of mapping");
+
+        handle_script(CommandType::Post, mapping);   
         handle_source_and_target(source, target);
+        handle_script(CommandType::Post, mapping);   
+    }
+
+    handle_script(CommandType::Post, stow_yaml);   
+}
+
+fn handle_script(command_type: CommandType, yaml: &Yaml)
+{
+    let script_target_option = match command_type {
+        CommandType::Pre => &yaml["pre_stow"],
+        CommandType::Post => &yaml["post_stow"],
+    }.as_str();
+    match script_target_option {
+        Some(target) => {
+            let output = Command::new("sh")
+                .arg(target)
+                .output()
+                .expect("Failed to execute pre_stow script.");
+            print!("{}", String::from_utf8(output.stdout)
+                .expect("stdout is utf-8 string."));
+            print!("{}", String::from_utf8(output.stderr)
+                .expect("stderr is utf-8 string."));
+        },
+        None => (),
     }
 }
 
 fn handle_source_and_target(source: &str, target: &str)
 {
-    let expanded_source = tilde(source);
-    let expanded_target = tilde(target);
+    let expanded_source = shellexpand::tilde(source);
+    let expanded_target = shellexpand::tilde(target);
     println!("{}", ["linking ", &expanded_source, " -> ", &expanded_target, ":"].join(""));
     let source_glob = [&expanded_source, "/**/*"].join("");
 
-    for entry in glob(&source_glob).expect("Failed to read glob pattern") {
+    for entry in glob::glob(&source_glob).expect("Failed to read glob pattern") {
         match entry {
             Ok(path) => {
                 match link_file(&expanded_source, &path, &expanded_target) {
@@ -92,9 +195,9 @@ fn link_file(source_prefix: &str, source: &PathBuf, target: &str)  -> std::io::R
         ].join(""));
         let mut target_parent = PathBuf::from(&target_path);
         target_parent.pop();
-        std::fs::create_dir_all(target_parent)?;
-        let canonical_source_path = canonicalize(source)?;
-        fs::symlink(canonical_source_path, target_path)?;
+        fs::create_dir_all(target_parent)?;
+        let canonical_source_path = fs::canonicalize(source)?;
+        unix_fs::symlink(canonical_source_path, target_path)?;
     }
     Ok(())
 }
