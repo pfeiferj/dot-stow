@@ -103,8 +103,6 @@ fn get_command_type(command_options: CommandOptionsPresent) -> ExecutionType {
 
 fn handle_yaml(app: &mut App)
 {
-    app.print_help()
-        .expect("Failed to print help");
     let stow_yaml_str = match fs::read_to_string(".stow/.stow.yml") {
         Ok(str) => str,
         Err(_) => {
