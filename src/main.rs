@@ -39,7 +39,7 @@ fn main() {
         ExecutionType::CurrentFolder => handle_yaml(&mut app),
         ExecutionType::SourceAndTarget => {
             let sat = get_source_and_target(m);
-            handle_source_and_target(sat.0.as_str(), sat.1.as_str());
+            handle_source_and_target(sat.0.as_str(), sat.1.as_str(), false);
         },
         ExecutionType::Init => {
             match init() {
@@ -55,22 +55,31 @@ fn main() {
 
 fn init() -> std::io::Result<()> {
     let install_file_str = include_str!("./init_files/install");
-    let stow_file_str = include_str!("./init_files/.stow.yml");
-    let install_sh_file_str = include_str!("./init_files/.stow_scripts/install.sh");
+    let stow_file_str = include_str!("./init_files/.stow/.stow.yml");
+    let install_sh_file_str = include_str!("./init_files/.stow/scripts/install.sh");
+    let gitignore_file_str = include_str!("./init_files/.stow/.gitignore");
 
 
-    if !std::path::Path::new(".stow_scripts").exists() {
-        fs::create_dir(".stow_scripts")?;
+    if !std::path::Path::new(".stow").exists() {
+        fs::create_dir(".stow")?;
+    }
+
+    if !std::path::Path::new(".stow/scripts").exists() {
+        fs::create_dir(".stow/scripts")?;
     }
 
     let mut buffer = std::fs::OpenOptions::new().create(true).write(true).open("install")?;
     buffer.write_all(install_file_str.as_bytes())?;
 
-    let mut buffer = std::fs::OpenOptions::new().create(true).write(true).open(".stow_scripts/install.sh")?;
+    let mut buffer = std::fs::OpenOptions::new().create(true).write(true).open(".stow/scripts/install.sh")?;
     buffer.write_all(install_sh_file_str.as_bytes())?;
 
-    if !std::path::Path::new(".stow.yml").exists() {
-        fs::write(".stow.yml", stow_file_str)?;
+    if !std::path::Path::new(".stow/.stow.yml").exists() {
+        fs::write(".stow/.stow.yml", stow_file_str)?;
+    }
+
+    if !std::path::Path::new(".stow/.gitignore").exists() {
+        fs::write(".stow/.gitignore", gitignore_file_str)?;
     }
     Ok(())
 }
@@ -96,7 +105,7 @@ fn handle_yaml(app: &mut App)
 {
     app.print_help()
         .expect("Failed to print help");
-    let stow_yaml_str = match fs::read_to_string(".stow.yml") {
+    let stow_yaml_str = match fs::read_to_string(".stow/.stow.yml") {
         Ok(str) => str,
         Err(_) => {
             app.print_help()
@@ -117,9 +126,14 @@ fn handle_yaml(app: &mut App)
             .expect("could not parse source of mapping");
         let target = mapping["target"].as_str()
             .expect("could not target source of mapping");
+        let as_copy_opt = mapping["as_copy"].as_bool();
+        let as_copy = match as_copy_opt {
+            Some(x) => x, 
+            None => false,
+        };
 
         handle_script(CommandType::Post, mapping);   
-        handle_source_and_target(source, target);
+        handle_source_and_target(source, target, as_copy);
         handle_script(CommandType::Post, mapping);   
     }
 
@@ -147,19 +161,31 @@ fn handle_script(command_type: CommandType, yaml: &Yaml)
     }
 }
 
-fn handle_source_and_target(source: &str, target: &str)
+fn handle_source_and_target(source: &str, target: &str, as_copy: bool)
 {
     let expanded_source = shellexpand::tilde(source);
     let expanded_target = shellexpand::tilde(target);
-    println!("{}", ["linking ", &expanded_source, " -> ", &expanded_target, ":"].join(""));
+    let action_prefix = match as_copy {
+        true => "Copying ",
+        false => "Linking "
+    };
+    println!("{}", [action_prefix, &expanded_source, " -> ", &expanded_target, ":"].join(""));
     let source_glob = [&expanded_source, "/**/*"].join("");
 
     for entry in glob::glob(&source_glob).expect("Failed to read glob pattern") {
         match entry {
             Ok(path) => {
-                match link_file(&expanded_source, &path, &expanded_target) {
-                    Ok(_) => (),
-                    Err(e) => eprintln!("    \x1b[93m{}\x1b[0m", e)
+                if as_copy {
+                    match copy_file(&expanded_source, &path, &expanded_target) {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("    \x1b[93m{}\x1b[0m", e)
+                    }
+
+                } else {
+                    match link_file(&expanded_source, &path, &expanded_target) {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("    \x1b[93m{}\x1b[0m", e)
+                    }
                 }
                 ()
             },
@@ -198,6 +224,26 @@ fn link_file(source_prefix: &str, source: &PathBuf, target: &str)  -> std::io::R
         fs::create_dir_all(target_parent)?;
         let canonical_source_path = fs::canonicalize(source)?;
         unix_fs::symlink(canonical_source_path, target_path)?;
+    }
+    Ok(())
+}
+
+fn copy_file(source_prefix: &str, source: &PathBuf, target: &str)  -> std::io::Result<()> {
+    if !source.is_dir() {
+        let source_stripped = strip_source(source_prefix, &source);
+        let target_path = combine_paths(&PathBuf::from(target), &source_stripped);
+        println!("{}", [
+            "  * ",
+            &source.display().to_string(),
+            " -> ",
+            &target_path.display().to_string()
+        ].join(""));
+        let mut target_parent = PathBuf::from(&target_path);
+        target_parent.pop();
+        fs::create_dir_all(target_parent)?;
+        let canonical_source_path = fs::canonicalize(source)?;
+
+        fs::copy(canonical_source_path, target_path)?;
     }
     Ok(())
 }
